@@ -13,7 +13,6 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,7 +85,7 @@ func inATestAsset() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "in/a/test.asset", size: 15, mode: os.FileMode(436), modTime: time.Unix(1445582844, 0)}
+	info := bindataFileInfo{name: "in/a/test.asset", size: 15, mode: os.FileMode(436), modTime: time.Unix(1464924728, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -106,7 +105,7 @@ func inBTestAsset() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "in/b/test.asset", size: 15, mode: os.FileMode(436), modTime: time.Unix(1445582844, 0)}
+	info := bindataFileInfo{name: "in/b/test.asset", size: 15, mode: os.FileMode(436), modTime: time.Unix(1464924728, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -126,7 +125,7 @@ func inCTestAsset() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "in/c/test.asset", size: 15, mode: os.FileMode(436), modTime: time.Unix(1445582844, 0)}
+	info := bindataFileInfo{name: "in/c/test.asset", size: 15, mode: os.FileMode(436), modTime: time.Unix(1464924728, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -146,7 +145,7 @@ func inTestAsset() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "in/test.asset", size: 15, mode: os.FileMode(436), modTime: time.Unix(1445582844, 0)}
+	info := bindataFileInfo{name: "in/test.asset", size: 15, mode: os.FileMode(436), modTime: time.Unix(1464924728, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -273,19 +272,7 @@ func RestoreAsset(dir, name string) error {
 	if err != nil {
 		return err
 	}
-	err = os.MkdirAll(_filePath(dir, filepath.Dir(name)), os.FileMode(0755))
-	if err != nil {
-		return err
-	}
-	err = ioutil.WriteFile(_filePath(dir, name), data, info.Mode())
-	if err != nil {
-		return err
-	}
-	err = os.Chtimes(_filePath(dir, name), info.ModTime(), info.ModTime())
-	if err != nil {
-		return err
-	}
-	return nil
+	return save(_filePath(dir, name), data, info.Mode(), info.ModTime())
 }
 
 // RestoreAssets restores an asset under the given directory recursively
@@ -308,5 +295,100 @@ func RestoreAssets(dir, name string) error {
 func _filePath(dir, name string) string {
 	cannonicalName := strings.Replace(name, "\\", "/", -1)
 	return filepath.Join(append([]string{dir}, strings.Split(cannonicalName, "/")...)...)
+}
+
+// save saves the given data to the file at filename. If an existing file at
+// that filename already exists, this simply chmods the existing file to match
+// the given fileMode and otherwise leaves it alone.
+func save(filename string, data []byte, fileMode os.FileMode, modTime time.Time) error {
+	path := filepath.Dir(filename)
+	if err := os.MkdirAll(path, os.FileMode(0755)); err != nil {
+		return err
+	}
+
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_EXCL, fileMode)
+	if err != nil {
+		if !os.IsExist(err) {
+			return err
+		}
+
+		if dataMatches(filename, data) {
+			err2 := chmod(filename, fileMode)
+			if err2 != nil {
+				return err2
+			}
+			return os.Chtimes(filename, modTime, modTime)
+		}
+
+		file, err = openAndTruncate(filename, fileMode, true)
+		if err != nil {
+			return err
+		}
+	}
+
+	if _, err = file.Write(data); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+
+	return os.Chtimes(filename, modTime, modTime)
+}
+
+func openAndTruncate(filename string, fileMode os.FileMode, removeIfNecessary bool) (*os.File, error) {
+	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE|os.O_TRUNC, fileMode)
+	if err != nil && os.IsPermission(err) && removeIfNecessary {
+		if err = os.Remove(filename); err != nil {
+			return nil, err
+		}
+		return openAndTruncate(filename, fileMode, false)
+	}
+
+	return file, err
+}
+
+// dataMatches compares the file at filename byte for byte with the given data
+func dataMatches(filename string, data []byte) bool {
+	file, err := os.OpenFile(filename, os.O_RDONLY, 0)
+	if err != nil {
+		return false
+	}
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	if fileInfo.Size() != int64(len(data)) {
+		return false
+	}
+	b := make([]byte, 65536)
+	i := 0
+	for {
+		n, err := file.Read(b)
+		if err != nil && err != io.EOF {
+			return false
+		}
+		for j := 0; j < n; j++ {
+			if b[j] != data[i] {
+				return false
+			}
+			i = i + 1
+		}
+		if err == io.EOF {
+			break
+		}
+	}
+	return true
+}
+
+func chmod(filename string, fileMode os.FileMode) error {
+	fi, err := os.Stat(filename)
+	if err != nil || fi.Mode() != fileMode {
+		return os.Chmod(filename, fileMode)
+	}
+	return err
 }
 

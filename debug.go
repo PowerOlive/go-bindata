@@ -31,10 +31,12 @@ func writeDebug(w io.Writer, c *Config, toc []Asset) error {
 func writeDebugHeader(w io.Writer) error {
 	_, err := fmt.Fprintf(w, `import (
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // bindataRead reads the given file from disk. It returns an error on failure.
